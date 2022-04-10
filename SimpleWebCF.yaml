@@ -1,0 +1,582 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'This is a simple web app'
+
+Parameters:
+  VPCName:
+    Description: 'the name of the VPC being created'
+    Type: String
+    Default: 'HarrySimpleWeb'
+
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: "10.1.0.0/16"
+    Public0: 
+      CIDR: "10.1.0.0/24"
+    Public1: 
+      CIDR: "10.1.1.0/24"
+  AZRegions:
+    ap-southeast-2:
+      AZs: ["a", "b"]
+
+Resources:
+  #VPC
+  HarrySimpleWebVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 
+        !FindInMap
+          - "SubnetConfig"
+          - "VPC"
+          - "CIDR"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: 
+            !Ref VPCName
+
+  # internet gateway
+  HarrySimpleWebIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-IGW'
+
+  # internet gateway Attachment
+  GatewayToInternet:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        !Ref HarrySimpleWebIGW
+      VpcId:
+        !Ref HarrySimpleWebVPC
+
+  # public subnet 0
+  HarrySimpleWebPublicSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      CidrBlock: 
+        !FindInMap
+          - "SubnetConfig"
+          - "Public0"
+          - "CIDR"
+      AvailabilityZone: 
+        !Sub
+          - ${AWS::Region}${AZ}
+          - AZ: !Select [0, !FindInMap ["AZRegions", !Ref "AWS::Region", "AZs"]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-public-0-'
+              - !Select [0, !FindInMap ["AZRegions", !Ref "AWS::Region", "AZs"]]
+
+  # public subnet 1
+  HarrySimpleWebPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      CidrBlock: 
+        !FindInMap
+          - "SubnetConfig"
+          - "Public1"
+          - "CIDR"
+      AvailabilityZone: 
+        !Sub
+          - ${AWS::Region}${AZ}
+          - AZ: !Select [1, !FindInMap ["AZRegions", !Ref "AWS::Region", "AZs"]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-public-1-'
+              - !Select [0, !FindInMap ["AZRegions", !Ref "AWS::Region", "AZs"]]
+  
+  # # private subnet
+  # HarrySimpleWebPrivateSubnet:
+  #   Type: AWS::EC2::Subnet
+  #   Properties:
+  #     VpcId:
+  #       !Ref HarrySimpleWebVPC
+  #     CidrBlock: 
+  #       !FindInMap
+  #         - "SubnetConfig"
+  #         - "Private0"
+  #         - "CIDR"
+  #     AvailabilityZone: 
+  #       !Sub
+  #         - ${AWS::Region}${AZ}
+  #         - AZ: !Select [1, !FindInMap ["AZRegions", !Ref "AWS::Region", "AZs"]]
+  #     MapPublicIpOnLaunch: false
+  #     Tags:
+  #       - Key: name
+  #         Value: !Join
+  #           - ''
+  #           - - !Ref VPCName
+  #             - '-private-'
+  #             - !Select [1, !FindInMap ["AZRegions", !Ref "AWS::Region", "AZs"]]
+
+  # public Route table
+  HarrySimpleWebPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      Tags: 
+        - Key: Name
+          Value: !Join
+          - ''
+          - - !Ref VPCName
+            - '-public-route-table'
+  
+  # public route table route
+  HarrySimpleWebPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        !Ref HarrySimpleWebPublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        !Ref HarrySimpleWebIGW
+    DependsOn: HarrySimpleWebIGW
+  
+  # public route table association 0
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        !Ref HarrySimpleWebPublicSubnet0
+      RouteTableId:
+        !Ref HarrySimpleWebPublicRouteTable
+
+  # public route table association 1
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        !Ref HarrySimpleWebPublicSubnet1
+      RouteTableId:
+        !Ref HarrySimpleWebPublicRouteTable
+  
+  # public network acl
+  PublicNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-public-nacl'
+  
+  # public network acl inbound entry
+  InboundHTTPPublicNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        !Ref PublicNetworkAcl
+      RuleNumber: 100
+      # why -1 here? any other values?
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: 0
+        To: 65535
+  
+  # public network acl outbound entry
+  OutboundHTTPPublicNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        !Ref PublicNetworkAcl
+      RuleNumber: 100
+      # -1 means all protocols? any other values?
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: 0
+        To: 65535
+  
+  # public network acl association 0
+  PublicSubnetNetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+        !Ref HarrySimpleWebPublicSubnet0
+      NetworkAclId:
+        !Ref PublicNetworkAcl
+
+  # public network acl association 1
+  PublicSubnetNetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+        !Ref HarrySimpleWebPublicSubnet1
+      NetworkAclId:
+        !Ref PublicNetworkAcl
+
+  # # elastic IP
+  # ElasticIP:
+  #   Type: AWS::EC2::EIP
+  #   Properties:
+  #     Domain: vpc
+  
+  # # NAT gateway
+  # NATGateway:
+  #   Type: AWS::EC2::NatGateway
+  #   Properties:
+  #     AllocationId:
+  #       !GetAtt ElasticIP.AllocationId
+  #     SubnetId:
+  #       !Ref HarrySimpleWebPublicSubnet
+  
+  # # private route table
+  # PrivateRouteTable:
+  #   Type: AWS::EC2::RouteTable
+  #   Properties:
+  #     VpcId:
+  #       !Ref HarrySimpleWebVPC
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Join
+  #           - ''
+  #           - - !Ref VPCName
+  #             - '-private-route-table'
+  
+  # # private route table route
+  # PrivateRouteTableToInternet:
+  #   Type: AWS::EC2::Route
+  #   Properties:
+  #     RouteTableId:
+  #       !Ref PrivateRouteTable
+  #     DestinationCidrBlock: '0.0.0.0/0'
+  #     NatGatewayId:
+  #       !Ref NATGateway
+  
+  # # private route table association
+  # PrivateSubnetRouteTableAssociation:
+  #   Type: AWS::EC2::SubnetRouteTableAssociation
+  #   Properties:
+  #     SubnetId:
+  #       !Ref HarrySimpleWebPrivateSubnet
+  #     RouteTableId:
+  #       !Ref PrivateRouteTable
+  
+  # # instance profile
+  HarrySimpleWebInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        # customised role
+        - EC2CodeDeploy
+  
+  # # ELB security group
+  HarrySimpleWebLBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'HarrySimpleWebSG'
+      GroupDescription: 'Allow HTTP'
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-ELB-SG'
+  
+  # EC2 security group
+  HarrySimpleWebEC2SG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'HarrySimpleWebEC2SG'
+      GroupDescription: 'Allow RDP'
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '1.2.3.4/32'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref
+            HarrySimpleWebLBSG
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-EC2-SG'
+  
+  # ELB
+  HarrySimpleWebLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: 'HarrySimpleWebLB'
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref HarrySimpleWebLBSG
+      Subnets:
+        - !Ref HarrySimpleWebPublicSubnet0
+        - !Ref HarrySimpleWebPublicSubnet1
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-Application-ELB'
+
+  # target group
+  HarrySimpleWebTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      # LB -> TG
+      # health check
+      Port: 80
+      Protocol: HTTP
+      VpcId:
+        !Ref HarrySimpleWebVPC
+      Name: 'HarrySimpleWebTG'
+  
+  # ELB listener
+  HarrySimpleWebLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        # redirect: force HTTP to HTTPS
+        - Type: forward
+          TargetGroupArn:
+            !Ref HarrySimpleWebTG
+      LoadBalancerArn:
+        !Ref HarrySimpleWebLB
+      Port: 80
+      Protocol: HTTP
+  
+  # Auto Scaling Group
+  HarrySimpleWebASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: HarrySimpleWebASG
+      VPCZoneIdentifier:
+        - !Ref HarrySimpleWebPublicSubnet0
+        - !Ref HarrySimpleWebPublicSubnet1
+      LaunchConfigurationName:
+        !Ref HarrySimpleWebLC
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 1
+      # double check
+      NewInstancesProtectedFromScaleIn: false
+      TerminationPolicies:
+        - NewestInstance
+      TargetGroupARNs:
+        - !Ref HarrySimpleWebTG
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-EC2-Instance'
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT15M
+  
+  # EC2 launch configuration
+  HarrySimpleWebLC:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          # need to double check
+          # need to install and set up nginx here
+          packages:
+            yum:
+              ruby: []
+              wget: []
+          # files:
+          #   /opt/install:
+          #     source: !Sub |
+          #       https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+              # if not quotation here, 000755 will be casted to 493, and interpret it as base 8
+          #     mode: '000755'
+          services:
+            sysvinit:
+              nginx:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - '/etc/nginx/nginx.conf'
+                sources:
+                  - '/var/www/html'
+          commands:
+            00-install-agent:
+              command: !Sub |
+                wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+                chmod +x ./install
+                ./install auto
+              # command: sudo /opt/install auto
+            01-cfn-signal:
+              command: !Sub |
+                /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource HarrySimpleWebASG --region ${AWS::Region}
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-059af0b76ba105e7e
+      IamInstanceProfile:
+        !Ref HarrySimpleWebInstanceProfile
+      SecurityGroups:
+        - !Ref HarrySimpleWebEC2SG
+      KeyName: Harry
+      LaunchConfigurationName: !Join
+          - ''
+          - - !Ref VPCName
+            - 'LC'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum -y update
+
+          amazon-linux-extras install nginx1
+
+          sudo rm /usr/share/nginx/html/index.html
+
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource HarrySimpleWebLC --region ${AWS::Region}
+
+  # scaling policy
+  HarrySimpleWebCPUPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName:
+        !Ref HarrySimpleWebASG
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
+  
+  # CodeDeploy application
+  HarrySimpleWebApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: HarrySimpleWebApplication
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ''
+            - - !Ref VPCName
+              - '-app'
+  
+  # codedeploy application deployment config
+  HarrySimpleWebDeploymentConfig:
+    Type: AWS::CodeDeploy::DeploymentConfig
+    Properties:
+      MinimumHealthyHosts:
+        Type: FLEET_PERCENT
+        Value: 75
+ 
+
+  # codedeploy deployment group
+  HarrySimpleWebDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName:
+        !Ref HarrySimpleWebApplication
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+      AutoScalingGroups:
+        - !Ref HarrySimpleWebASG
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      ServiceRoleArn: # YourRoleARN
+      DeploymentGroupName: !Join
+        - ''
+        - - !Ref VPCName
+          - 'DeploymentGroup'
+  
+  # s3 bucket for Artifacts
+  HarrySimpleWebS3ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: 'harry-simpleweb-artifacts-bucket'
+
+  # # s3 bucket for codedeploy, created by hand
+  # HarrySimpleWebS3CodeDeployBucket:
+  #   Type: AWS::S3::Bucket
+  #   Properties:
+  #     BucketName: harrySimpleWebS3CodeDeployBucket
+  
+  # code pipeline
+  HarrySimpleWebCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: # YourRoleARN
+      ArtifactStore:
+        Location: harry-simpleweb-artifacts-bucket
+        Type: S3
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: S3
+              OutputArtifacts:
+                - Name: staticwebsite
+              Configuration:
+                # update the source code here, and it will automatically update
+                S3Bucket: harry-simpleweb-codedeploy-bucket
+                S3ObjectKey: 'my_file.zip'
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CodeDeploy
+              InputArtifacts:
+                - Name: staticwebsite
+              Configuration:
+                ApplicationName:
+                  !Ref HarrySimpleWebApplication
+                DeploymentGroupName:
+                  !Ref HarrySimpleWebDeploymentGroup
+    DependsOn: HarrySimpleWebASG
+
+#Output:
